@@ -1,0 +1,111 @@
+services:
+  erp:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${ERP_DB}
+      - POSTGRES_USER=${ERP_ADMIN}
+      - POSTGRES_PASSWORD_FILE=/run/secrets/erp-admin-password
+      - ERP_USER=${ERP_USER}
+    secrets:
+      - erp-admin-password
+      - erp-user-password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+      start_interval: 2s
+    networks:
+      - erp
+    volumes:
+      - erp-db:/var/lib/postgresql
+      - ./erp/init:/docker-entrypoint-initdb.d:ro
+
+  etl_pipeline:
+    build: ./etl_pipeline
+    restart: "no"
+    environment:
+      - ERP_HOST=erp
+      - ERP_DB=${ERP_DB}
+      - ERP_USER=${ERP_USER}
+      - ERP_PASSWORD_FILE=/run/secrets/erp-user-password
+      - WAREHOUSE_HOST=warehouse
+      - WAREHOUSE_DB=${WAREHOUSE_DB}
+      - WAREHOUSE_USER=${WAREHOUSE_ETL_USER}
+      - WAREHOUSE_PASSWORD_FILE=/run/secrets/warehouse-etl-user-password
+    secrets:
+      - erp-user-password
+      - warehouse-etl-user-password
+    depends_on:
+      erp:
+        condition: service_healthy
+      warehouse:
+        condition: service_healthy
+    networks:
+      - erp
+      - warehouse
+
+  warehouse:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${WAREHOUSE_DB}
+      - POSTGRES_USER=${WAREHOUSE_ADMIN}
+      - POSTGRES_PASSWORD_FILE=/run/secrets/warehouse-admin-password
+      - WAREHOUSE_ETL_USER=${WAREHOUSE_ETL_USER}
+      - WAREHOUSE_USER=${WAREHOUSE_USER}
+
+    secrets:
+      - warehouse-admin-password
+      - warehouse-user-password
+      - warehouse-etl-user-password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+      start_interval: 2s
+    networks:
+      - warehouse
+    volumes:
+      - warehouse-db:/var/lib/postgresql
+      - ./warehouse/init:/docker-entrypoint-initdb.d:ro
+
+  info:
+    build: ./info
+    restart: "no"
+    environment:
+      - WAREHOUSE_HOST=warehouse
+      - WAREHOUSE_DB=${WAREHOUSE_DB}
+      - WAREHOUSE_USER=${WAREHOUSE_USER}
+      - WAREHOUSE_PASSWORD_FILE=/run/secrets/warehouse-user-password
+    secrets:
+      - warehouse-user-password
+    depends_on:
+      warehouse:
+        condition: service_healthy
+    networks:
+      - warehouse
+
+secrets:
+  erp-admin-password:
+    file: secrets/erp_admin_password.txt
+  erp-user-password:
+    file: secrets/erp_user_password.txt
+  warehouse-admin-password:
+    file: secrets/warehouse_admin_password.txt
+  warehouse-user-password:
+    file: secrets/warehouse_user_password.txt
+  warehouse-etl-user-password:
+    file: secrets/warehouse_etl_user_password.txt
+
+volumes:
+  erp-db:
+  warehouse-db:
+
+networks:
+  erp:
+  warehouse:
